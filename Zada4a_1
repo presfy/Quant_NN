@@ -1,0 +1,67 @@
+import os
+import pandas as pd
+from dwave.system.samplers import DWaveSampler
+from dwave.system.composites import EmbeddingComposite
+import numpy as np
+
+# ...
+os.environ['DWAVE_API_TOKEN'] = API_TOKEN
+
+file_name = 'task-1-stocks.csv'
+P = pd.read_csv(file_name).values
+
+RISK_LEVEL = 0.2
+BUDGET = 1_000_000
+
+N, T = P.shape
+M = int(BUDGET / min(P[0])) + 1
+
+R = [
+    [P[i + 1][j] / P[i][j] - 1 for j in range(N)]
+    for i in range(T - 1)
+] + [
+    [P[T - 2][j] / P[T - 2][j] - 1 for j in range(N)]
+]
+r = [sum(R[i][j] for i in range(T - 1)) / (T - 1) for j in range(N)]
+
+С_1 = 10.0
+C_2 = 10.0
+
+Q = {}
+for i in range(T):
+    for k in range(T):
+        for j in range(M):
+            for m in range(M):
+                print(i / T, k / T, j / M, m / M)
+                Q[(i, j), (k, m)] = С_1 * j * m * P[0][i] * P[0][k]
+                Q[(i, j), (k, m)] += C_2 * (T - 1) / T * j * m * sum(
+                    R[i][a] * R[k][b]
+                    for a in range(N) for b in range(N) if a == k
+                ) / (T * (T - 1))
+                if i == k and j == m: Q[(i, j), (k, m)] += -r[i] * j
+
+sampler = EmbeddingComposite(DWaveSampler())
+response = sampler.sample_qubo(Q, num_reads=100)
+
+X = response.first.sample
+selected_assets = [(i, j) for i in range(T) for j in range(M) if X[i][j] == 1]
+
+portfolio_return = sum(
+    R[t][i] * j * X[t][j]
+    for j in range(M)
+    for i in range(N)
+    for t in range(T)
+) / T
+portfolio_risk = np.sqrt(
+    sum((
+        sum(
+            R[t_now][i] * j * X[t_now][j]
+            for j in range(M)
+            for i in range(N)
+        ) - portfolio_return
+    ) ** 2 for t_now in range(T)) / (T - 1)
+)
+
+print("Выбранные акции:", selected_assets)
+print("Доходность портфеля:", portfolio_return)
+print("Риск портфеля:", portfolio_risk)
